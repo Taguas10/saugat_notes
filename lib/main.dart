@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p; // Using 'as p' to stop the Context error
+import 'package:path/path.dart' as p;
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 
 void main() => runApp(const MaterialApp(
   home: NotesScreen(),
@@ -14,7 +15,7 @@ class DatabaseHelper {
   static Future<Database> get database async {
     if (_db != null) return _db!;
     _db = await openDatabase(
-      p.join(await getDatabasesPath(), 'saugat_notes.db'), // Using p.join here
+      p.join(await getDatabasesPath(), 'saugat_notes.db'),
       onCreate: (db, version) {
         return db.execute(
           "CREATE TABLE notes(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, content TEXT)",
@@ -26,7 +27,7 @@ class DatabaseHelper {
   }
 }
 
-// --- MAIN SCREEN: LIST OF TOPICS ---
+// --- MAIN SCREEN ---
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
   @override
@@ -48,10 +49,30 @@ class _NotesScreenState extends State<NotesScreen> {
     _refreshNotes();
   }
 
-  void _addTopic(String title) async {
-    final db = await DatabaseHelper.database;
-    await db.insert('notes', {'title': title, 'content': ''});
-    _refreshNotes();
+  // Dialog to add a new note title
+  void _showAddDialog() {
+    TextEditingController titleController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("New Note Title"),
+        content: TextField(controller: titleController, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () async {
+              if (titleController.text.isNotEmpty) {
+                final db = await DatabaseHelper.database;
+                await db.insert('notes', {'title': titleController.text, 'content': ''});
+                _refreshNotes();
+                Navigator.pop(context);
+              }
+            },
+            child: const Text("Create"),
+          ),
+        ],
+      ),
+    );
   }
 
   void _deleteNote(int id) async {
@@ -63,65 +84,82 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text("Saugat's Notes"),
         backgroundColor: Colors.deepPurple,
         foregroundColor: Colors.white,
+        elevation: 0,
       ),
       body: _allNotes.isEmpty
-          ? const Center(child: Text("No topics yet. Tap + to start!"))
-          : ListView.builder(
+          ? const Center(child: Text("No notes yet. Tap + to add one!"))
+          : MasonryGridView.count(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        padding: const EdgeInsets.all(12),
         itemCount: _allNotes.length,
-        itemBuilder: (context, index) => Card(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          child: ListTile(
-            leading: const Icon(Icons.book, color: Colors.deepPurple),
-            title: Text(_allNotes[index]['title'], style: const TextStyle(fontWeight: FontWeight.bold)),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete, color: Colors.redAccent),
-              onPressed: () => _deleteNote(_allNotes[index]['id']),
-            ),
-            onTap: () {
-              Navigator.push(
+        itemBuilder: (context, index) {
+          final note = _allNotes[index];
+          return GestureDetector(
+            onTap: () async {
+              await Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => EditNoteScreen(note: _allNotes[index]),
-                ),
-              ).then((_) => _refreshNotes());
+                MaterialPageRoute(builder: (context) => EditNoteScreen(note: note)),
+              );
+              _refreshNotes(); // Refresh when coming back
             },
-          ),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          final controller = TextEditingController();
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text("New Topic"),
-              content: TextField(controller: controller, autofocus: true),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                ElevatedButton(
-                  onPressed: () {
-                    if (controller.text.isNotEmpty) {
-                      _addTopic(controller.text);
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text("Create"),
-                )
-              ],
+            child: Container(
+              padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: Colors.deepPurple.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          note['title'],
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.deepPurple),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                        onPressed: () => _deleteNote(note['id']),
+                      )
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    note['content'].isEmpty ? "Empty note..." : note['content'],
+                    style: TextStyle(color: Colors.grey[700], fontSize: 14),
+                    maxLines: 5,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
             ),
           );
         },
-        child: const Icon(Icons.add),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddDialog,
+        backgroundColor: Colors.deepPurple,
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
 }
 
-// --- WRITING SCREEN: EDIT CONTENT ---
+// --- EDIT SCREEN ---
 class EditNoteScreen extends StatefulWidget {
   final Map<String, dynamic> note;
   const EditNoteScreen({required this.note, super.key});
@@ -148,7 +186,9 @@ class _EditNoteScreenState extends State<EditNoteScreen> {
       whereArgs: [widget.note['id']],
     );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saved!")));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Saved!"), duration: Duration(seconds: 1)),
+      );
     }
   }
 
@@ -157,6 +197,8 @@ class _EditNoteScreenState extends State<EditNoteScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.note['title']),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.save), onPressed: _saveContent),
         ],
